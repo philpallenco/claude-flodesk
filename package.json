@@ -1,0 +1,12 @@
+{
+  "name": "claude-flodesk",
+  "version": "1.0.0",
+  "description": "Weekly Flodesk email stats → Slack digest",
+  "type": "module",
+  "scripts": {
+    "report": "node scripts/weekly-report.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
