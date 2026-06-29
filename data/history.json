@@ -32,10 +32,10 @@
   {"date":"2026-05-04","totalActive":19054,"totalUnsub":null,"netGrowth":27,"newSubs":27,"unsubsThisWeek":0},
   {"date":"2026-05-11","totalActive":19071,"totalUnsub":null,"netGrowth":18,"newSubs":18,"unsubsThisWeek":0},
   {"date":"2026-05-18","totalActive":19092,"totalUnsub":null,"netGrowth":25,"newSubs":25,"unsubsThisWeek":0},
-  {"date":"2026-05-25","totalActive":19117,"totalUnsub":null,"netGrowth":-5,"newSubs":30,"unsubsThisWeek":35},
-  {"date":"2026-06-01","totalActive":19173,"totalUnsub":null,"netGrowth":29,"newSubs":63,"unsubsThisWeek":34},
-  {"date":"2026-06-08","totalActive":19209,"totalUnsub":null,"netGrowth":-3,"newSubs":36,"unsubsThisWeek":39},
-  {"date":"2026-06-15","totalActive":19227,"totalUnsub":null,"netGrowth":1,"newSubs":27,"unsubsThisWeek":26},
-  {"date":"2026-06-22","totalActive":19257,"totalUnsub":null,"netGrowth":31,"newSubs":33,"unsubsThisWeek":2},
-  {"date":"2026-06-29","totalActive":23808,"totalUnsub":3080,"netGrowth":null,"newSubs":null,"unsubsThisWeek":null}
+  {"date":"2026-05-25","totalActive":23621,"totalUnsub":null,"netGrowth":-5,"newSubs":30,"unsubsThisWeek":35},
+  {"date":"2026-06-01","totalActive":23677,"totalUnsub":null,"netGrowth":56,"newSubs":90,"unsubsThisWeek":34},
+  {"date":"2026-06-08","totalActive":23713,"totalUnsub":null,"netGrowth":36,"newSubs":72,"unsubsThisWeek":36},
+  {"date":"2026-06-15","totalActive":23741,"totalUnsub":null,"netGrowth":28,"newSubs":54,"unsubsThisWeek":26},
+  {"date":"2026-06-22","totalActive":23779,"totalUnsub":null,"netGrowth":38,"newSubs":40,"unsubsThisWeek":2},
+  {"date":"2026-06-29","totalActive":23808,"totalUnsub":3080,"netGrowth":29,"newSubs":29,"unsubsThisWeek":0}
 ]
