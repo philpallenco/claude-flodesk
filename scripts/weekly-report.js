@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HISTORY_PATH = resolve(__dirname, '../data/history.json');
+const BRAND_PATH   = resolve(__dirname, '../brand.md');
 const FLODESK_BASE = 'https://api.flodesk.com/v1';
 const SLACK_POST   = 'https://slack.com/api/chat.postMessage';
 
@@ -94,8 +95,17 @@ function buildWeekEntry(date, snapshot, prev) {
 
 // --- Claude report generation ---
 
+function loadBrandContext() {
+  try {
+    return readFileSync(BRAND_PATH, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
 async function generateReport(entry, history) {
   const recent = history.slice(-8); // last 8 weeks for context
+  const brandContext = loadBrandContext();
 
   const historyText = recent.length > 1
     ? recent.map(w =>
@@ -112,25 +122,33 @@ ${entry.netGrowth != null ? `Net growth this week: ${entry.netGrowth >= 0 ? '+' 
 ${entry.newSubs != null ? `New subscribers: ${entry.newSubs}` : ''}
 ${entry.unsubsThisWeek != null ? `Unsubscribes: ${entry.unsubsThisWeek}` : ''}`.trim();
 
+  const brandSection = brandContext
+    ? `\nBRAND CONTEXT:\n${brandContext}\n`
+    : '';
+
   const msg = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 600,
+    max_tokens: 1200,
     messages: [{
       role: 'user',
-      content: `You are an email marketing analyst. Write a concise weekly Slack report for a creator's Flodesk subscriber list.
-
+      content: `You are an email marketing strategist for a personal branding creator. Write a detailed weekly Slack report using the brand context and subscriber data below.
+${brandSection}
 THIS WEEK:
 ${thisWeek}
 
-HISTORY (most recent first shown last):
+HISTORY (oldest to newest):
 ${historyText}
 
 Write a report with these sections (use Slack markdown: *bold*, _italic_):
-1. *This week* — key numbers with brief context (2–3 lines)
-2. *Trend* — what the data shows over time, honest and specific (1–2 lines)
-3. *Recommendation* — one concrete, actionable suggestion based on the trend (1–2 lines)
 
-Keep the total under 8 lines. Be specific, not generic. If it's the first week, skip the trend and recommendation sections and just confirm tracking has started.`,
+1. *📊 This week* — key numbers with specific context (2–3 lines)
+2. *📈 Trend* — honest analysis of what the data shows over the past 8 weeks; reference actual numbers (2–3 lines)
+3. *💡 Insight* — one observation about the audience or list health that isn't obvious from the numbers alone; tie it to the brand context (2 lines)
+4. *✉️ Email idea* — one specific email campaign Phil could send this week, with a suggested subject line and a one-sentence description of the angle; make it relevant to his brand pillars (2–3 lines)
+5. *🎯 Lead magnet opportunity* — one gap or opportunity in his freebie lineup based on what's working and what's missing; be specific about the topic and format (2 lines)
+6. *⚡ Action* — the single most important thing to do this week to improve list growth or engagement; be direct and specific (1–2 lines)
+
+Keep each section tight. Be specific to Phil's brand — never give generic email marketing advice. If it's the first week of tracking, skip Trend and just confirm tracking has started.`,
     }],
   });
 
