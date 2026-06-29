@@ -218,7 +218,13 @@ async function main() {
   const entry   = buildWeekEntry(todayStr, snapshot, prev);
   console.log('This week entry:', entry);
 
-  history.push(entry);
+  // Replace any existing entry for today (prevents duplicates on re-runs)
+  const idx = history.findIndex(w => w.date === todayStr);
+  if (idx >= 0) {
+    history[idx] = entry;
+  } else {
+    history.push(entry);
+  }
   saveHistory(history);
   console.log(`History saved (${history.length} weeks).`);
 
