@@ -1,6 +1,9 @@
 /**
  * Weekly Flodesk → Slack report, written by Claude
  *
+ * Tracks subscriber history in data/history.json (committed back to the repo
+ * each run) and uses Claude to analyse trends and generate recommendations.
+ *
  * Required env vars:
  *   ANTHROPIC_API_KEY  — Anthropic API key
  *   FLODESK_API_KEY    — Flodesk public API key
@@ -9,7 +12,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { readFileSync, writeFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const HISTORY_PATH = resolve(__dirname, '../data/history.json');
 const FLODESK_BASE = 'https://api.flodesk.com/v1';
 const SLACK_POST   = 'https://slack.com/api/chat.postMessage';
 
@@ -23,47 +31,113 @@ if (!ANTHROPIC_API_KEY || !FLODESK_API_KEY || !SLACK_BOT_TOKEN || !SLACK_CHANNEL
 const flodeskAuth = 'Basic ' + Buffer.from(`${FLODESK_API_KEY}:`).toString('base64');
 const anthropic   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-function isoDate(d) {
-  return d.toISOString().split('T')[0];
+function isoDate(d) { return d.toISOString().split('T')[0]; }
+
+// --- Flodesk API helpers ---
+
+async function fetchSubscriberCount(status = null) {
+  const url = status
+    ? `${FLODESK_BASE}/subscribers?status=${status}&per_page=1`
+    : `${FLODESK_BASE}/subscribers?per_page=1`;
+  const res = await fetch(url, { headers: { Authorization: flodeskAuth } });
+  if (!res.ok) throw new Error(`Flodesk /subscribers${status ? '?status=' + status : ''} → ${res.status}`);
+  const json = await res.json();
+  return json.meta?.total_items ?? null;
 }
 
-async function getFlodeskData() {
-  const res = await fetch(`${FLODESK_BASE}/subscribers?per_page=1`, {
-    headers: { Authorization: flodeskAuth },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Flodesk /subscribers → ${res.status}: ${text}`);
+async function getFlodeskSnapshot() {
+  const totalActive = await fetchSubscriberCount();
+
+  // Try to get unsubscribed count — may not be supported
+  let totalUnsub = null;
+  try {
+    totalUnsub = await fetchSubscriberCount('unsubscribed');
+  } catch {
+    console.log('Unsub count not available via API — will use delta from history.');
   }
-  const json = await res.json();
+
+  return { totalActive, totalUnsub };
+}
+
+// --- History helpers ---
+
+function loadHistory() {
+  try {
+    return JSON.parse(readFileSync(HISTORY_PATH, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  writeFileSync(HISTORY_PATH, JSON.stringify(history, null, 2));
+}
+
+function buildWeekEntry(date, snapshot, prev) {
+  const netGrowth   = prev ? snapshot.totalActive - prev.totalActive : null;
+  const unsubsDelta = (snapshot.totalUnsub != null && prev?.totalUnsub != null)
+    ? snapshot.totalUnsub - prev.totalUnsub
+    : null;
+  const newSubs     = (netGrowth != null && unsubsDelta != null)
+    ? netGrowth + unsubsDelta  // new = net + churned
+    : netGrowth;               // fallback: net growth only
+
   return {
-    totalSubscribers: json.meta?.total_items ?? '—',
+    date,
+    totalActive:  snapshot.totalActive,
+    totalUnsub:   snapshot.totalUnsub,
+    netGrowth,
+    newSubs,
+    unsubsThisWeek: unsubsDelta,
   };
 }
 
-async function generateReport(data, weekLabel) {
+// --- Claude report generation ---
+
+async function generateReport(entry, history) {
+  const recent = history.slice(-8); // last 8 weeks for context
+
+  const historyText = recent.length > 1
+    ? recent.map(w =>
+        `${w.date}: ${w.totalActive.toLocaleString()} active` +
+        (w.netGrowth != null ? `, net ${w.netGrowth >= 0 ? '+' : ''}${w.netGrowth}` : '') +
+        (w.newSubs != null ? `, ${w.newSubs} new` : '') +
+        (w.unsubsThisWeek != null ? `, ${w.unsubsThisWeek} unsubs` : '')
+      ).join('\n')
+    : 'First week of tracking — no prior history yet.';
+
+  const thisWeek = `Date: ${entry.date}
+Total active subscribers: ${entry.totalActive.toLocaleString()}
+${entry.netGrowth != null ? `Net growth this week: ${entry.netGrowth >= 0 ? '+' : ''}${entry.netGrowth}` : ''}
+${entry.newSubs != null ? `New subscribers: ${entry.newSubs}` : ''}
+${entry.unsubsThisWeek != null ? `Unsubscribes: ${entry.unsubsThisWeek}` : ''}`.trim();
+
   const msg = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 512,
+    max_tokens: 600,
     messages: [{
       role: 'user',
-      content: `Write a short, upbeat weekly email marketing summary for Slack.
+      content: `You are an email marketing analyst. Write a concise weekly Slack report for a creator's Flodesk subscriber list.
 
-Week: ${weekLabel}
-Data available:
-- Total active subscribers: ${data.totalSubscribers.toLocaleString()}
+THIS WEEK:
+${thisWeek}
 
-Guidelines:
-- Open with one punchy sentence (e.g. "Your list keeps growing!")
-- Show the subscriber count clearly
-- Mention that open rates, click rates, and campaign stats are in the Flodesk dashboard
-- End with a brief motivating note
-- Use Slack markdown: *bold*, _italic_
-- Keep it under 5 lines total — short and scannable`,
+HISTORY (most recent first shown last):
+${historyText}
+
+Write a report with these sections (use Slack markdown: *bold*, _italic_):
+1. *This week* — key numbers with brief context (2–3 lines)
+2. *Trend* — what the data shows over time, honest and specific (1–2 lines)
+3. *Recommendation* — one concrete, actionable suggestion based on the trend (1–2 lines)
+
+Keep the total under 8 lines. Be specific, not generic. If it's the first week, skip the trend and recommendation sections and just confirm tracking has started.`,
     }],
   });
+
   return msg.content[0].text;
 }
+
+// --- Slack ---
 
 async function postToSlack(reportText, weekLabel) {
   const blocks = [
@@ -85,7 +159,7 @@ async function postToSlack(reportText, weekLabel) {
       type: 'context',
       elements: [{
         type: 'mrkdwn',
-        text: 'Open rates · Click rates · Campaign stats → <https://app.flodesk.com/analytics|Flodesk Analytics>',
+        text: 'Open rates · click rates · campaigns → <https://app.flodesk.com/analytics|Flodesk Analytics>',
       }],
     },
   ];
@@ -108,18 +182,30 @@ async function postToSlack(reportText, weekLabel) {
   return json;
 }
 
+// --- Main ---
+
 async function main() {
   const today   = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(today.getDate() - 7);
   const weekLabel = `${isoDate(weekAgo)} – ${isoDate(today)}`;
+  const todayStr  = isoDate(today);
 
-  console.log('Fetching Flodesk data…');
-  const data = await getFlodeskData();
-  console.log('Subscribers:', data.totalSubscribers);
+  console.log('Fetching Flodesk snapshot…');
+  const snapshot = await getFlodeskSnapshot();
+  console.log('Snapshot:', snapshot);
+
+  const history = loadHistory();
+  const prev    = history.at(-1) ?? null;
+  const entry   = buildWeekEntry(todayStr, snapshot, prev);
+  console.log('This week entry:', entry);
+
+  history.push(entry);
+  saveHistory(history);
+  console.log(`History saved (${history.length} weeks).`);
 
   console.log('Generating report with Claude…');
-  const reportText = await generateReport(data, weekLabel);
+  const reportText = await generateReport(entry, history);
   console.log('Report:\n', reportText);
 
   console.log('Posting to Slack…');
