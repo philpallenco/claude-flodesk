@@ -1,4 +1,4 @@
-# Phil Allen — Brand Context for Weekly Report
+# Phil Pallen — Brand Context for Weekly Report
 
 ## Who Phil Is
 Personal branding educator and content creator. Helps entrepreneurs, creators, and coaches build a recognisable personal brand online — primarily through email, Instagram, and long-form content.
