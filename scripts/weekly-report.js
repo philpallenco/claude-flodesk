@@ -139,16 +139,27 @@ ${thisWeek}
 HISTORY (oldest to newest):
 ${historyText}
 
-Write a report with these sections (use Slack markdown: *bold*, _italic_):
+Write a report with these sections. Use Slack mrkdwn only: *bold* and _italic_. Do NOT use ##, #, ---, or any Markdown that Slack doesn't support. Separate sections with a blank line only.
 
-1. *📊 This week* — key numbers with specific context (2–3 lines)
-2. *📈 Trend* — honest analysis of what the data shows over the past 8 weeks; reference actual numbers (2–3 lines)
-3. *💡 Insight* — one observation about the audience or list health that isn't obvious from the numbers alone; tie it to the brand context (2 lines)
-4. *✉️ Email idea* — one specific email campaign Phil could send this week, with a suggested subject line and a one-sentence description of the angle; make it relevant to his brand pillars (2–3 lines)
-5. *🎯 Lead magnet opportunity* — one gap or opportunity in his freebie lineup based on what's working and what's missing; be specific about the topic and format (2 lines)
-6. *⚡ Action* — the single most important thing to do this week to improve list growth or engagement; be direct and specific (1–2 lines)
+*📊 This week*
+[key numbers with specific context — 2–3 lines]
 
-Keep each section tight. Be specific to Phil's brand — never give generic email marketing advice. If it's the first week of tracking, skip Trend and just confirm tracking has started.`,
+*📈 Trend*
+[honest analysis of the past 8 weeks with actual numbers — 2–3 lines]
+
+*💡 Insight*
+[one non-obvious observation about audience or list health, tied to the brand — 2 lines]
+
+*✉️ Email idea*
+[one specific campaign Phil could send this week; include a suggested subject line in quotes and a one-sentence angle — 2–3 lines]
+
+*🎯 Lead magnet opportunity*
+[one specific gap in the freebie lineup; name the topic and format — 2 lines]
+
+*⚡ Action*
+[the single most important thing to do this week — 1–2 lines]
+
+Be specific to Phil Pallen's brand — never give generic advice. If it's the first week of tracking, skip Trend and just confirm tracking has started.`,
     }],
   });
 
