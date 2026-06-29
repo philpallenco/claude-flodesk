@@ -56,21 +56,21 @@ async function buildReport() {
   const prevFrom = isoDate(fourteenDaysAgo);
   const weekTo   = isoDate(today);
 
-  // Fetch in parallel
-  const [subTotals, emailTotals, topEmails, weekTrends, prevTrends, subTrends] =
+  // Fetch in parallel — subscriber totals include 7-day new/unsub vs prior period
+  const [subTotals, emailTotals, topEmails, weekTrends, prevTrends] =
     await Promise.all([
       flodesk('/analytics/subscribers?period=last7Days'),
       flodesk('/analytics/emails'),
       flodesk('/analytics/emails?orderBy=openRate&sort=desc&perPage=3'),
       flodesk(`/analytics/emails/trends?from=${weekFrom}&to=${weekTo}&interval=week`),
       flodesk(`/analytics/emails/trends?from=${prevFrom}&to=${weekFrom}&interval=week`),
-      flodesk(`/analytics/subscribers/trends?from=${weekFrom}&to=${weekTo}&interval=week`),
     ]);
 
-  // Subscriber data
-  const totalSubs    = subTotals.totalActives ?? subTotals.data?.totalActives ?? '—';
-  const newThisWeek  = subTotals.totalNew     ?? subTotals.data?.totalNew     ?? '—';
-  const unsubsWeek   = subTotals.totalUnsubscribed ?? subTotals.data?.totalUnsubscribed ?? 0;
+  // Subscriber data — Flodesk returns these fields at the top level or under data
+  const sub          = subTotals.data ?? subTotals;
+  const totalSubs    = sub.totalActives   ?? '—';
+  const newThisWeek  = sub.totalNew       ?? sub.newSubscribers   ?? '—';
+  const unsubsWeek   = sub.totalUnsub     ?? sub.totalUnsubscribed ?? 0;
   const netGrowth    = typeof newThisWeek === 'number' && typeof unsubsWeek === 'number'
     ? newThisWeek - unsubsWeek
     : '—';
