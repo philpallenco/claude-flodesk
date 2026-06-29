@@ -36,28 +36,65 @@ function isoDate(d) { return d.toISOString().split('T')[0]; }
 
 // --- Flodesk API helpers ---
 
+async function flodeskGet(path) {
+  const res = await fetch(`${FLODESK_BASE}${path}`, {
+    headers: { Authorization: flodeskAuth },
+  });
+  if (!res.ok) throw new Error(`Flodesk ${path} → ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 async function fetchSubscriberCount(status = null) {
-  const url = status
-    ? `${FLODESK_BASE}/subscribers?status=${status}&per_page=1`
-    : `${FLODESK_BASE}/subscribers?per_page=1`;
-  const res = await fetch(url, { headers: { Authorization: flodeskAuth } });
-  if (!res.ok) throw new Error(`Flodesk /subscribers${status ? '?status=' + status : ''} → ${res.status}`);
-  const json = await res.json();
+  const qs  = status ? `?status=${status}&per_page=1` : '?per_page=1';
+  const json = await flodeskGet(`/subscribers${qs}`);
   return json.meta?.total_items ?? null;
+}
+
+async function fetchSegments() {
+  try {
+    const json = await flodeskGet('/segments?per_page=20');
+    return (json.data ?? []).map(s => ({
+      name:         s.name,
+      subscribersCount: s.subscribers_count ?? null,
+    }));
+  } catch (err) {
+    console.log('Segments fetch failed:', err.message);
+    return [];
+  }
+}
+
+async function fetchRecentEmails(perPage = 5) {
+  try {
+    const json = await flodeskGet(`/emails?per_page=${perPage}&sort_by=sent_at&sort_order=desc`);
+    return (json.data ?? []).map(e => ({
+      subject:   e.subject ?? e.name,
+      sentAt:    e.sent_at,
+      openRate:  e.open_rate  != null ? `${(e.open_rate  * 100).toFixed(1)}%` : null,
+      clickRate: e.click_rate != null ? `${(e.click_rate * 100).toFixed(1)}%` : null,
+      sends:     e.total_sends ?? null,
+    }));
+  } catch (err) {
+    console.log('Emails fetch failed:', err.message);
+    return [];
+  }
 }
 
 async function getFlodeskSnapshot() {
   const totalActive = await fetchSubscriberCount();
 
-  // Try to get unsubscribed count — may not be supported
   let totalUnsub = null;
   try {
     totalUnsub = await fetchSubscriberCount('unsubscribed');
   } catch {
-    console.log('Unsub count not available via API — will use delta from history.');
+    console.log('Unsub count not available — will use delta from history.');
   }
 
-  return { totalActive, totalUnsub };
+  const [segments, recentEmails] = await Promise.all([
+    fetchSegments(),
+    fetchRecentEmails(5),
+  ]);
+
+  return { totalActive, totalUnsub, segments, recentEmails };
 }
 
 // --- History helpers ---
@@ -79,14 +116,14 @@ function buildWeekEntry(date, snapshot, prev) {
   const unsubsDelta = (snapshot.totalUnsub != null && prev?.totalUnsub != null)
     ? snapshot.totalUnsub - prev.totalUnsub
     : null;
-  const newSubs     = (netGrowth != null && unsubsDelta != null)
-    ? netGrowth + unsubsDelta  // new = net + churned
-    : netGrowth;               // fallback: net growth only
+  const newSubs = (netGrowth != null && unsubsDelta != null)
+    ? netGrowth + unsubsDelta
+    : netGrowth;
 
   return {
     date,
-    totalActive:  snapshot.totalActive,
-    totalUnsub:   snapshot.totalUnsub,
+    totalActive:    snapshot.totalActive,
+    totalUnsub:     snapshot.totalUnsub,
     netGrowth,
     newSubs,
     unsubsThisWeek: unsubsDelta,
@@ -103,64 +140,84 @@ function loadBrandContext() {
   }
 }
 
-async function generateReport(entry, history) {
-  const recent = history.slice(-8); // last 8 weeks for context
+async function generateReport(entry, history, snapshot) {
+  const recent = history.slice(-8);
   const brandContext = loadBrandContext();
 
   const historyText = recent.length > 1
     ? recent.map(w =>
         `${w.date}: ${w.totalActive.toLocaleString()} active` +
-        (w.netGrowth != null ? `, net ${w.netGrowth >= 0 ? '+' : ''}${w.netGrowth}` : '') +
-        (w.newSubs != null ? `, ${w.newSubs} new` : '') +
+        (w.netGrowth    != null ? `, net ${w.netGrowth >= 0 ? '+' : ''}${w.netGrowth}` : '') +
+        (w.newSubs      != null ? `, ${w.newSubs} new` : '') +
         (w.unsubsThisWeek != null ? `, ${w.unsubsThisWeek} unsubs` : '')
       ).join('\n')
     : 'First week of tracking — no prior history yet.';
 
-  const thisWeek = `Date: ${entry.date}
-Total active subscribers: ${entry.totalActive.toLocaleString()}
-${entry.netGrowth != null ? `Net growth this week: ${entry.netGrowth >= 0 ? '+' : ''}${entry.netGrowth}` : ''}
-${entry.newSubs != null ? `New subscribers: ${entry.newSubs}` : ''}
-${entry.unsubsThisWeek != null ? `Unsubscribes: ${entry.unsubsThisWeek}` : ''}`.trim();
+  const thisWeek = [
+    `Date: ${entry.date}`,
+    `Total active subscribers: ${entry.totalActive.toLocaleString()}`,
+    entry.netGrowth    != null ? `Net growth this week: ${entry.netGrowth >= 0 ? '+' : ''}${entry.netGrowth}` : '',
+    entry.newSubs      != null ? `New subscribers: ${entry.newSubs}` : '',
+    entry.unsubsThisWeek != null ? `Unsubscribes: ${entry.unsubsThisWeek}` : '',
+  ].filter(Boolean).join('\n');
 
-  const brandSection = brandContext
-    ? `\nBRAND CONTEXT:\n${brandContext}\n`
-    : '';
+  const segmentsText = snapshot.segments.length
+    ? snapshot.segments
+        .map(s => `  • ${s.name}: ${s.subscribersCount?.toLocaleString() ?? '?'} subs`)
+        .join('\n')
+    : '  (not available)';
 
-  const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1200,
-    messages: [{
-      role: 'user',
-      content: `You are an email marketing strategist for a personal branding creator. Write a detailed weekly Slack report using the brand context and subscriber data below.
+  const emailsText = snapshot.recentEmails.length
+    ? snapshot.recentEmails
+        .map(e =>
+          `  • "${e.subject}" sent ${e.sentAt ?? 'n/a'}` +
+          (e.openRate  ? ` | open ${e.openRate}`  : '') +
+          (e.clickRate ? ` | click ${e.clickRate}` : '') +
+          (e.sends     ? ` | ${e.sends} sends`     : '')
+        )
+        .join('\n')
+    : '  (not available)';
+
+  const brandSection = brandContext ? `\nBRAND CONTEXT:\n${brandContext}\n` : '';
+
+  const prompt = `You are an email marketing strategist for Phil Pallen, a personal branding educator. Write a weekly Slack digest using the data below.
 ${brandSection}
 THIS WEEK:
 ${thisWeek}
 
-HISTORY (oldest to newest):
+SEGMENTS (top by size):
+${segmentsText}
+
+RECENT EMAILS (newest first):
+${emailsText}
+
+8-WEEK HISTORY (oldest → newest):
 ${historyText}
 
-Write a report with these sections. Use Slack mrkdwn only: *bold* and _italic_. Do NOT use ##, #, ---, or any Markdown that Slack doesn't support. Separate sections with a blank line only.
+Write exactly 6 sections in this order. Use Slack mrkdwn ONLY: *bold* and _italic_. Do NOT use ##, #, ---, or any heading syntax. Separate sections with one blank line. No extra blank lines within a section.
 
-*📊 This week*
-[key numbers with specific context — 2–3 lines]
+*:bar_chart: This week* — key numbers with context (2–3 lines)
 
-*📈 Trend*
-[honest analysis of the past 8 weeks with actual numbers — 2–3 lines]
+*:chart_with_upwards_trend: Trend* — 8-week analysis referencing real figures from the history above (2–3 lines)
 
-*💡 Insight*
-[one non-obvious observation about audience or list health, tied to the brand — 2 lines]
+*:bulb: Insight* — one non-obvious observation about audience or list health tied specifically to Phil's brand (2 lines)
 
-*✉️ Email idea*
-[one specific campaign Phil could send this week; include a suggested subject line in quotes and a one-sentence angle — 2–3 lines]
+*:email: Email idea* — one specific campaign Phil could send this week; include a suggested subject line in quotes and a one-sentence angle (2–3 lines)
 
-*🎯 Lead magnet opportunity*
-[one specific gap in the freebie lineup; name the topic and format — 2 lines]
+*:dart: Lead magnet opportunity* — one specific gap in the freebie lineup; name the exact topic and format (2 lines)
 
-*⚡ Action*
-[the single most important thing to do this week — 1–2 lines]
+*:zap: Action* — the single most important move this week (1–2 lines)
 
-Be specific to Phil Pallen's brand — never give generic advice. If it's the first week of tracking, skip Trend and just confirm tracking has started.`,
-    }],
+Rules:
+- Every recommendation must be specific to Phil Pallen's personal branding audience, never generic.
+- Reference real numbers from the data above — don't fabricate figures.
+- If it's the first week of tracking, replace the Trend section with a note confirming tracking has started.
+- Output only the six sections — no preamble, no sign-off.`;
+
+  const msg = await anthropic.messages.create({
+    model:      'claude-haiku-4-5-20251001',
+    max_tokens: 1200,
+    messages:   [{ role: 'user', content: prompt }],
   });
 
   return msg.content[0].text;
@@ -172,7 +229,7 @@ async function postToSlack(reportText, weekLabel) {
   const blocks = [
     {
       type: 'header',
-      text: { type: 'plain_text', text: '📬 Weekly Flodesk Report', emoji: true },
+      text: { type: 'plain_text', text: ':postbox: Weekly Flodesk Report', emoji: true },
     },
     {
       type: 'context',
@@ -194,14 +251,14 @@ async function postToSlack(reportText, weekLabel) {
   ];
 
   const res = await fetch(SLACK_POST, {
-    method: 'POST',
+    method:  'POST',
     headers: {
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+      Authorization:  `Bearer ${SLACK_BOT_TOKEN}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       channel: SLACK_CHANNEL_ID,
-      text: `Weekly Flodesk Report (${weekLabel})`,
+      text:    `Weekly Flodesk Report (${weekLabel})`,
       blocks,
     }),
   });
@@ -222,14 +279,15 @@ async function main() {
 
   console.log('Fetching Flodesk snapshot…');
   const snapshot = await getFlodeskSnapshot();
-  console.log('Snapshot:', snapshot);
+  console.log('Active subscribers:', snapshot.totalActive);
+  console.log('Segments fetched:', snapshot.segments.length);
+  console.log('Recent emails fetched:', snapshot.recentEmails.length);
 
   const history = loadHistory();
   const prev    = history.at(-1) ?? null;
   const entry   = buildWeekEntry(todayStr, snapshot, prev);
   console.log('This week entry:', entry);
 
-  // Replace any existing entry for today (prevents duplicates on re-runs)
   const idx = history.findIndex(w => w.date === todayStr);
   if (idx >= 0) {
     history[idx] = entry;
@@ -240,7 +298,7 @@ async function main() {
   console.log(`History saved (${history.length} weeks).`);
 
   console.log('Generating report with Claude…');
-  const reportText = await generateReport(entry, history);
+  const reportText = await generateReport(entry, history, snapshot);
   console.log('Report:\n', reportText);
 
   console.log('Posting to Slack…');
