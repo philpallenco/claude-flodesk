@@ -32,8 +32,16 @@ async function getSubscriberCount() {
     throw new Error(`Flodesk GET /subscribers → ${res.status}: ${text}`);
   }
   const json = await res.json();
-  // Flodesk returns total in meta.total or pagination fields
-  return json.meta?.total ?? json.total_count ?? json.data?.length ?? '—';
+  console.log('Flodesk response keys:', JSON.stringify(Object.keys(json)));
+  console.log('Flodesk meta:', JSON.stringify(json.meta ?? json.pagination ?? null));
+  // Try every known Flodesk pagination field
+  return json.meta?.total
+    ?? json.meta?.total_count
+    ?? json.pagination?.total
+    ?? json.total
+    ?? json.total_count
+    ?? json.count
+    ?? '—';
 }
 
 async function postToSlack(message) {
