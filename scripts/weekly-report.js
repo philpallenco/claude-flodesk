@@ -27,12 +27,6 @@ function pct(decimal) {
   return (decimal * 100).toFixed(1) + '%';
 }
 
-function delta(current, previous) {
-  if (previous == null || previous === 0) return '';
-  const diff = current - previous;
-  const sign = diff >= 0 ? '+' : '';
-  return ` (${sign}${pct(diff)} vs last week)`;
-}
 
 async function flodesk(path) {
   const res = await fetch(`${FLODESK_BASE}${path}`, {
@@ -46,45 +40,29 @@ async function flodesk(path) {
 }
 
 async function buildReport() {
-  const today     = new Date();
+  const today        = new Date();
   const sevenDaysAgo = new Date(today);
   sevenDaysAgo.setDate(today.getDate() - 7);
-  const fourteenDaysAgo = new Date(today);
-  fourteenDaysAgo.setDate(today.getDate() - 14);
 
-  const weekFrom = isoDate(sevenDaysAgo);
-  const prevFrom = isoDate(fourteenDaysAgo);
-  const weekTo   = isoDate(today);
+  // Fetch in parallel — only endpoints confirmed to exist in the Flodesk public API
+  const [subTotals, emailTotals] = await Promise.all([
+    flodesk('/analytics/subscribers?period=last7Days'),
+    flodesk('/analytics/emails'),
+  ]);
 
-  // Fetch in parallel — subscriber totals include 7-day new/unsub vs prior period
-  const [subTotals, emailTotals, topEmails, weekTrends, prevTrends] =
-    await Promise.all([
-      flodesk('/analytics/subscribers?period=last7Days'),
-      flodesk('/analytics/emails'),
-      flodesk('/analytics/emails?orderBy=openRate&sort=desc&perPage=3'),
-      flodesk(`/analytics/emails/trends?from=${weekFrom}&to=${weekTo}&interval=week`),
-      flodesk(`/analytics/emails/trends?from=${prevFrom}&to=${weekFrom}&interval=week`),
-    ]);
-
-  // Subscriber data — Flodesk returns these fields at the top level or under data
-  const sub          = subTotals.data ?? subTotals;
-  const totalSubs    = sub.totalActives   ?? '—';
-  const newThisWeek  = sub.totalNew       ?? sub.newSubscribers   ?? '—';
-  const unsubsWeek   = sub.totalUnsub     ?? sub.totalUnsubscribed ?? 0;
-  const netGrowth    = typeof newThisWeek === 'number' && typeof unsubsWeek === 'number'
+  // Subscriber data
+  const sub         = subTotals.data ?? subTotals;
+  const totalSubs   = sub.totalActives ?? sub.summary?.overall?.totalActives ?? '—';
+  const newThisWeek = sub.totalNew7d   ?? sub.summary?.overall?.totalNew7d   ?? sub.totalNew ?? '—';
+  const unsubsWeek  = sub.totalUnsub   ?? sub.summary?.change?.totalUnsub?.value ?? 0;
+  const netGrowth   = typeof newThisWeek === 'number' && typeof unsubsWeek === 'number'
     ? newThisWeek - unsubsWeek
     : '—';
 
-  // Email performance (current week vs prior week)
-  const currentWeek = weekTrends.data?.[0]  ?? {};
-  const priorWeek   = prevTrends.data?.[0]  ?? {};
-  const openRateCur  = currentWeek.openRate  ?? emailTotals.openRate  ?? null;
-  const clickRateCur = currentWeek.clickRate ?? emailTotals.clickRate ?? null;
-  const openRatePrev  = priorWeek.openRate  ?? null;
-  const clickRatePrev = priorWeek.clickRate ?? null;
-
-  // Top campaigns
-  const campaigns = (topEmails.data ?? []).slice(0, 3);
+  // Email performance
+  const totals       = emailTotals.totals ?? emailTotals;
+  const openRateCur  = totals.openRate  ?? null;
+  const clickRateCur = totals.clickRate ?? null;
 
   // Build Slack Block Kit message
   const weekLabel = `${isoDate(sevenDaysAgo)} – ${isoDate(today)}`;
@@ -114,25 +92,9 @@ async function buildReport() {
         type: 'mrkdwn',
         text: [
           '*Email Performance*',
-          openRateCur  != null ? `• Open rate:  *${pct(openRateCur)}*${delta(openRateCur, openRatePrev)}`   : '• Open rate:  —',
-          clickRateCur != null ? `• Click rate: *${pct(clickRateCur)}*${delta(clickRateCur, clickRatePrev)}` : '• Click rate: —',
+          openRateCur  != null ? `• Open rate:  *${pct(openRateCur)}*`  : '• Open rate:  —',
+          clickRateCur != null ? `• Click rate: *${pct(clickRateCur)}*` : '• Click rate: —',
         ].join('\n'),
-      },
-    },
-    { type: 'divider' },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: campaigns.length
-          ? '*Top Campaigns by Open Rate*\n' +
-            campaigns.map((c, i) => {
-              const name = c.name ?? c.subject ?? `Campaign ${i + 1}`;
-              const open = c.openRate  != null ? pct(c.openRate)  : '—';
-              const click = c.clickRate != null ? pct(c.clickRate) : '—';
-              return `${i + 1}. *${name}* — ${open} open · ${click} click`;
-            }).join('\n')
-          : '*Top Campaigns*\nNo campaign data available.',
       },
     },
   ];
